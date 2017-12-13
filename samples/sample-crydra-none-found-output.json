@@ -1,0 +1,15 @@
+{
+  "generator": {
+    "software": "Hydra",
+    "version": "v8.6-dev",
+    "built": "2017-06-23 06:44:34",
+    "server": "teamserver.aspectsecurity.com",
+    "service": "http-post-form",
+    "jsonoutputversion": "1.00",
+    "commandline": "/usr/local/bin/hydra -I -V -o /tmp/crydra-tmp-28410-results.json -b jsonv1 -s 8080 -L /tmp/crydra-tmp-28410-userlist.txt -t 2 -W 0 -d -P dictionary_sample_12.txt teamserver.aspectsecurity.com http-post-form /application/login/login.html:_loginAction=login&_loginUserName=^USER^&_loginPassword=^PASSWORD^&_loginButton=:F=Login Failed"
+  },
+  "results": [],
+  "success": true,
+  "errormessages": [],
+  "quantityfound": 0
+}

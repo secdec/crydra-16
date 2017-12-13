@@ -1,0 +1,92 @@
+{
+    "$id": "https://www.thc.org/thc-hydra/hydra-output-v1.00.schema.json",
+    "$schema": "http://json-schema.org/draft-06/schema#",
+    "description": "The output of the Hydra tool in json format",
+    "type": "object",
+    "properties": {
+        "errormessages":  {
+            "description": "A list of the errors or warnings from Hydra",
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "generator":  {
+            "type": "object",
+            "properties": {
+                "built": {
+                    "description": "Date and Time Hydra was built (ISO8601, but not guaranteed).  This date is not RFC 3339, sec 5.6 compliant and thus not a json-schema data-time.",
+                    "type": "string"
+                },
+                "commandline": {
+                    "description": "Command line used to invoke Hydra",
+                    "type": "string"
+                },
+                "jsonoutputversion": {
+                    "description": "Version of the json schema output by Hydra, such 1.00, 1.01, 1.11, 2.00, 2.03, etc.  Hydra will make second tuple of the version to always be two digits to make it easier for downstream processors (as opposed to v1.1 vs v1.10).  The minor-level versions are additive, so 1.02 will contain more fields than version 1.00 and will be backward compatible.  Version 2.x will break something from version 1.x output. ",
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d\\d$"
+                },
+                "server": {
+                    "description": "Destination server name/IP hydra queried during audit",
+                    "type": "string"
+                },
+                "service": {
+                    "description": "The hydra service module called.",
+                    "type": "string"
+                },
+                "software": {
+                    "description": "The name of the software, 'Hydra'.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version string of Hydra (free-form: 8.4, 8.5dev, etc)",
+                    "type": "string"
+                }
+            }
+        },
+        "quantityfound":  {
+            "type": "integer",
+            "description": "A count of the number of credentials discovered during the Hydra audit process.",
+            "minimum": 0
+        },
+        "results":  {
+            "type": "array",
+            "description": "An array of the credentials discovered.  Note that login and password fields are optional as there could be instances where either are not required for authentication.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "description": "Server name/IP where Hydra found these credentials",
+                        "type": "string"
+                    },
+                    "login": {
+                        "description": "Username",
+                        "type": "string"
+                    },
+                    "password": {
+                        "description": "Password",
+                        "type": "string"
+                    },
+                    "port": {
+                        "description": "Server port where Hydra found these credentials",
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "host": {
+                        "description": "Server name/IP where Hydra found these credentials",
+                        "type": "string"
+                    },
+                    "service": {
+                        "description": "Which service module determined these credentials",
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "success":  {
+            "description": "Did Hydra complete the execution without serious error.",
+            "type": "boolean"
+        }
+    }
+}

